@@ -1,253 +1,160 @@
-LOAN APPLICATION PIPELINE — ASSIGNMENT 5
+LOAN APPLICATION PIPELINE - ASSIGNMENT 6: HANDLING TEMPORAL COUPLING
+
+Team: Yernazar, Dias (confirm names and groups before submitting)
+Course: Introduction to Functional Programming, 2026-2027
+This project continues the Assignment 5 loan application pipeline (same repository, same domain).
 
 
 1. PROJECT OVERVIEW
 
-Topic: Loan application scoring and approval pipeline.
+Workflow: raw application records -> validated factory -> explicit workflow states -> approval policy -> summary.
 
-Intended users: Credit officers who need to quickly determine whether
-an application is approved and for what amount.
+Input: RawApplicationRecord (ApplicantId, MonthlyIncome, RequestedAmount, CreditScore, HasExistingDebt as text).
 
-Planned team: 2 students (Yernazar, Dias).
-
-Input fields:
-- ApplicantId (string) — unique applicant identifier
-- MonthlyIncome (decimal) — applicant's monthly income
-- RequestedAmount (decimal) — amount of credit requested
-- CreditScore (int) — credit score, standard FICO-like scale
-- HasExistingDebt (bool) — whether the applicant already has debt
-
-Business rules:
-
-Validation — all fields are required:
+Domain rules:
+- ApplicantId required
 - MonthlyIncome >= 0
 - RequestedAmount > 0
-- CreditScore in range [300, 850]
-- HasExistingDebt must parse as true/false
+- CreditScore in [300, 850]
+- HasExistingDebt parses as true/false
+- Eligibility threshold: CreditScore >= 500 (ApplicationTransitions.EligibilityThreshold)
+- Conservative policy: min score 650, limit = income x 3; Flexible: min score 550, limit = income x 5;
+  existing debt halves the limit; approved amount = min(requested, limit)
 
-Stage 1 — Eligibility (independent of policy):
-Only applications with CreditScore >= 500 are admitted for review.
-Lower scores are rejected before any scoring happens.
+Output: ApplicationSummary (policy, submitted, eligible, approved, total approved amount, ordered decisions).
 
-Stage 2 — Approval policies (configurable, interchangeable):
 
-Conservative policy:
-- Minimum CreditScore to approve: 650
-- Credit limit: MonthlyIncome x 3
-- If HasExistingDebt = true: limit x 0.5
-- Approved amount: min(RequestedAmount, limit) if score passes, else 0
+2. TASK 1 - HIDDEN DEPENDENCY (UNSAFE "BEFORE" EXAMPLE, documentation only)
 
-Flexible policy:
-- Minimum CreditScore to approve: 550
-- Credit limit: MonthlyIncome x 5
-- If HasExistingDebt = true: limit x 0.5
-- Approved amount: min(RequestedAmount, limit) if score passes, else 0
-
-Stage 3 — Summary:
-Aggregates all decisions, sorts approved applications by approved
-amount in descending order.
-
-Expected output: An ApplicationSummary containing: policy name,
-total submitted, number eligible for review, number approved,
-total approved amount, and the ordered list of individual decisions.
+In Assignment 5 the pipeline relied on two hidden steps that nothing enforced:
+(1) the record must be validated by ApplicationParser.TryParse first;
+(2) SelectEligibleForReview must run before ComputeDecisions.
+ApplicationRequest had a public constructor and ComputeDecisions accepted any ApplicationRequest.
 
-
-2. DATASET AND EXPECTED RESULTS (documented before running)
-
-A1: Income=50000, Requested=100000, CreditScore=700, Debt=false
-    Valid — normal case
-    Conservative: approved 100000
-    Flexible: approved 100000
-
-A2: Income=30000, Requested=20000, CreditScore=500, Debt=false
-    Valid — boundary (exactly eligibility threshold)
-    Admitted to review; both policies reject (500 < 650 and < 550)
-
-A3: Income=40000, Requested=30000, CreditScore=600, Debt=false
-    Valid — policies differ
-    Conservative: rejected (600 < 650)
-    Flexible: approved 30000 (600 >= 550)
-
-A4: Income=10000, Requested=20000, CreditScore=700, Debt=true
-    Valid — with existing debt
-    Conservative: limit 15000 -> approved 15000 (capped)
-    Flexible: limit 25000 -> approved 20000 (full)
-
-A5: Income=20000, Requested=5000, CreditScore=499, Debt=false
-    Valid input, but excluded at Stage 1 (below threshold)
-    Not scored at all
-
-A6: Income=(missing), Requested=5000, CreditScore=600, Debt=false
-    Invalid — missing income
-    Rejected at parsing
-
-A7: Income=10000, Requested=5000, CreditScore="abc", Debt=false
-    Invalid — CreditScore not a number
-    Rejected at parsing
-
-A8: Income=10000, Requested=5000, CreditScore=900, Debt=false
-    Invalid — CreditScore out of range [300,850]
-    Rejected at parsing
-
-This dataset covers: normal flow, exact boundary inclusion/exclusion,
-policy divergence, debt surcharge, and three distinct invalid-input
-cases.
-
-
-3. HOW TO RUN
-
-SDK version: .NET 10 (verify with "dotnet --list-sdks"; if different,
-update <TargetFramework> in both .csproj files accordingly).
-
-Working directory: repository root (where the .sln file is located).
-
-Commands:
-  dotnet build
-  dotnet run --project src/LoanApplicationPipeline
-  dotnet test
-
-Normal demonstration:
-Running the console app prints parsing results for all 8 records,
-then runs both policies (Conservative, Flexible) on the valid subset
-and prints a summary for each.
-
-Failure demonstration:
-Records A6, A7, A8 in the console output show SKIP lines with
-explicit rejection reasons (missing field, malformed value,
-out-of-range value).
-
-
-4. PIPELINE STAGES (Task 3 documentation)
-
-Stage 1 — ApplicationStages.SelectEligibleForReview
-Input type: IReadOnlyList<ApplicationRequest>
-Output type: IReadOnlyList<ApplicationRequest>
-Rule: applications with CreditScore < 500 are excluded from review;
-remaining amounts are rounded to 2 decimal places.
-Example: CreditScore = 500 -> included; CreditScore = 499 -> excluded.
-
-Stage 2 — ApplicationStages.ComputeDecisions
-Input type: IReadOnlyList<ApplicationRequest>,
-Func<ApplicationRequest, (bool Approved, decimal ApprovedAmount)>
-Output type: IReadOnlyList<ApplicationDecision>
-Rule: the decision is computed entirely by the supplied policy
-delegate; the stage itself holds no thresholds or limits.
-Example: Conservative policy, CreditScore=700, Income=50000,
-Requested=100000, no debt -> Approved=true, ApprovedAmount=100000.
-
-Stage 3 — ApplicationStages.BuildSummary
-Input type: IReadOnlyList<ApplicationDecision>, policy name,
-total submitted count
-Output type: ApplicationSummary
-Rule: aggregates decisions into counts/totals and orders approved
-applications by approved amount descending.
-Example: one decision with Approved=true, ApprovedAmount=700
--> Summary.Approved=1, Summary.TotalApprovedAmount=700.
-
-Stages are composed in ApplicationWorkflow.Run, which is the single
-visible application workflow connecting all three stages.
-
-
-5. REQUIREMENT-TO-CODE MAP
-
-Typed input/output models
-  Files: Models/RawApplicationRecord.cs, ApplicationRequest.cs (Yernazar);
-         ApplicationDecision.cs, ApplicationSummary.cs (Dias)
-  Author: Yernazar / Dias
-
-Boundary validation (TryParse style)
-  File: Validation/ApplicationParser.cs
-  Author: Yernazar
-
-Stage 1 (selection/normalisation)
-  File: Pipeline/ApplicationStages.cs -> SelectEligibleForReview
-  Author: Yernazar
-
-Stage 2 (domain value computation)
-  File: Pipeline/ApplicationStages.cs -> ComputeDecisions
-  Author: Dias
-
-Stage 3 (result model)
-  File: Pipeline/ApplicationStages.cs -> BuildSummary
-  Author: Dias
-
-Higher-order function (Task 4)
-  File: Pipeline/ApplicationWorkflow.cs -> Run(..., Func<ApplicationRequest,
-        (bool,decimal)> approvalPolicy, ...)
-  Author: Dias
-
-Two interchangeable policies
-  File: Pipeline/ApprovalPolicies.cs -> Conservative, Flexible
-  Author: Dias
-
-Pure functional core (Task 5)
-  File: All of ApplicationStages.cs: no Console/File/DateTime/Random,
-        returns new arrays, uses record "with" instead of mutation
-  Author: Yernazar & Dias
-
-Parsing tests
-  File: tests/LoanApplicationPipeline.Tests/ParsingTests.cs
-  Author: Yernazar
-
-Pipeline/policy tests
-  File: tests/LoanApplicationPipeline.Tests/PipelineTests.cs
-  Author: Dias
-
-
-6. TEST COVERAGE
-
-ValidRecord_IsParsedIntoDomainModel
-  Covers: Baseline parsing correctness
-
-InvalidAndMissingInput_AreRejectedAtParsing
-  Covers: INVALID AND MISSING INPUT
-
-SelectEligibleForReview_DoesNotMutateCallerOwnedInput
-  Covers: PURITY AND STAGES
-
-NormalWorkflow_BothPolicies_ApproveFullRequestedAmount
-  Covers: NORMAL WORKFLOW
-
-EmptyDataset_ProducesEmptySummaryWithoutCrashing
-  Covers: EMPTY DATASET
-
-BoundaryCreditScore_AtEligibilityThreshold_IsIncludedInReview
-  Covers: BOUNDARY VALUE
-
-BoundaryCreditScore_JustBelowEligibilityThreshold_IsExcludedFromReview
-  Covers: BOUNDARY VALUE
-
-TwoPolicies_OnSameInput_ProduceDifferentApprovalDecision
-  Covers: TWO POLICIES
-
-DebtSurcharge_CapsApprovedAmountDifferentlyPerPolicy
-  Covers: TWO POLICIES (additional)
-
-ComputeDecisions_DoesNotMutateCallerOwnedInput
-  Covers: PURITY AND STAGES
-
-Total: 9 automated tests (minimum required: 6).
-
-Latest test run: dotnet test -> 9 passed, 0 failed, 13.10.2026
-
-
-7. TEAM CONTRIBUTIONS
-
-Yernazar:
-Implemented RawApplicationRecord / ApplicationRequest models,
-ApplicationParser (boundary validation), Stage 1
-(SelectEligibleForReview), and ParsingTests.cs.
-
-Dias:
-Implemented ApplicationDecision / ApplicationSummary models,
-ApprovalPolicies (two policies), Stage 2 and Stage 3,
-ApplicationWorkflow, Program.cs, and PipelineTests.cs.
-
-Both members reviewed and can defend the full pipeline end to end.
-
-
-8. PREREQUISITES
-
-- .NET 10 SDK (or adjust TargetFramework to match the installed SDK)
-- No external services, databases, or network access required
-- No secrets or API keys used in this project
+    // BEFORE (Assignment 5) - not part of the active code
+    var bad = new ApplicationRequest("X", -5000m, 100m, 700, false);   // never validated
+    var d = ApplicationStages.ComputeDecisions(new[] { bad },
+                ApprovalPolicies.Conservative, "Conservative");
+    // Approved = true, ApprovedAmount = -15000   (Math.Min(100, -5000 * 3))
+    // Also: skipping SelectEligibleForReview lets a score-499 request reach the policy.
+
+Prerequisite: validation, then eligibility review. Wrong order or a skipped step produced an approved
+application with a negative amount, or an application that was never eligibility-checked.
+
+AFTER (this version): the prerequisites are visible in the types.
+    var outcome = ValidatedApplication.Create(raw);                  // only way to get a validated value
+    var pending = ApplicationTransitions.Submit(app);                 // needs a ValidatedApplication
+    var r1 = ApplicationTransitions.Decide(pending, policy);          // NotAllowed: review not started
+    var r2 = ApplicationTransitions.StartReview(pending);             // Moved(UnderReview | Ineligible)
+Calls that no longer compile (not included in the project):
+    new ValidatedApplication(...)                  // constructor is private
+    app with { CreditScore = 900 }                 // properties are get-only
+    ApplicationWorkflow.Run(rawRecords, ...)       // needs ValidatedApplication, not raw data
+
+
+3. TASK 2 - FACTORY
+
+File: src/LoanApplicationPipeline/Models/ValidatedApplication.cs -> ValidatedApplication.Create
+- Checks all five rules above (more than the required two) and reports every failed rule.
+- Access restriction: private constructor + get-only properties. External code cannot construct an
+  unchecked value or change one afterwards. Amounts are normalised to 2 decimals inside the factory.
+- Returns ValidationOutcome.Valid (usable value) or ValidationOutcome.Invalid (reasons); no partial value escapes.
+- Used by the real application: ApplicationIntake.Process (called from Program.cs) feeds ApplicationWorkflow.Run.
+
+
+4. TASK 3 - DISTINCT CASES
+
+ValidationOutcome (Models/ValidationOutcome.cs): Valid(ValidatedApplication) | Invalid(Reasons).
+ApplicationState (Models/ApplicationState.cs), closed hierarchy (private base constructor):
+- Pending(Application)               submitted, review not started
+- UnderReview(Application)           score >= 500, waiting for a policy decision
+- Approved(Application, Amount)      policy approved, carries the amount
+- Declined(Application, Reason)      policy rejected, carries the reason
+- Ineligible(Application, Threshold) score below threshold, never scored
+TransitionOutcome (Models/TransitionOutcome.cs): Moved(Next) | NotAllowed(Reason).
+
+
+5. TASK 4 - PATTERN MATCHING IN THE REAL PATH
+
+- ApplicationIntake.Process: switch over ValidationOutcome (Valid -> accepted, Invalid -> reasons).
+- ApplicationTransitions.StartReview / Decide: switch expressions over ApplicationState.
+- ApplicationWorkflow.Process: switch over TransitionOutcome.
+- ApplicationStages.BuildSummary: switch over every state case (Pending/UnderReview are rejected as non-final).
+Fallbacks throw InvalidOperationException; no casts and no null-forgiving operators are used.
+
+
+6. TASK 5 - SAFE OPERATIONS
+
+- Transitions are pure: they take a state and return a new outcome; nothing is mutated.
+- Decide accepts only an ApplicationState; the prerequisite (UnderReview) is visible and enforced.
+- ApplyPolicy validates the policy result (negative amount, rejected-with-amount) before creating a new state.
+- Failed transitions return NotAllowed; the original state, application and input collections are untouched.
+- Repeated operation rule (documented): StartReview/Decide on a state that already moved on returns the
+  EXISTING state unchanged (idempotent, same object).
+- Demonstrations (see Program.cs output): one successful operation (A1), invalid cases (A6, A7, A8, A9 rejected by
+  the factory; Decide on Pending rejected as an invalid sequence), repeated Decide.
+
+
+7. HOW TO RUN
+
+SDK: .NET 10 (check with "dotnet --list-sdks"; otherwise change <TargetFramework> in both .csproj files).
+Working directory: repository root (where LoanApplicationPipeline.sln is).
+
+    dotnet build
+    dotnet run --project src/LoanApplicationPipeline
+    dotnet test
+
+Normal demonstration: run the console app - intake output, both policies, then the safe transition demo.
+Failure demonstration: SKIP lines for A6-A9 and the "Rejected: Cannot decide..." line of the transition demo.
+Prerequisites: .NET 10 SDK only; no network services, secrets or databases.
+
+
+8. REQUIREMENT-TO-CODE MAP
+
+Hidden dependency example ........ README.md section 2
+Factory (Task 2) ................. Models/ValidatedApplication.cs -> Create
+Distinct cases (Task 3) .......... Models/ValidationOutcome.cs, ApplicationState.cs, TransitionOutcome.cs
+Pattern matching (Task 4) ........ Pipeline/ApplicationIntake.cs, ApplicationTransitions.cs, ApplicationWorkflow.cs, ApplicationStages.cs
+Safe operations (Task 5) ......... Pipeline/ApplicationTransitions.cs (StartReview, Decide)
+Workflow ......................... Pipeline/ApplicationWorkflow.cs -> Run, Process
+Policies (from Assignment 5) ..... Pipeline/ApprovalPolicies.cs (now take ValidatedApplication)
+
+
+9. TESTS (23 test methods; the factory theory has 9 data rows)
+
+FactoryTests.cs
+- Create_ValidInput_ReturnsValidWithExpectedData ........ FACTORY SUCCESS
+- Create_InvalidInput_ReturnsInvalidWithReason (9 rows) . FACTORY REJECTION
+- Create_CreditScoreBoundaries_FollowRange .............. BOUNDARY VALUE (300/299, 850/851)
+- Create_MultipleBrokenFields_ReportsAllReasons
+- Create_NormalisesAmountsToTwoDecimals
+- Create_FailedConstruction_LeavesRawRecordUnchanged .... STATE PRESERVATION
+TransitionTests.cs
+- StartReview_ScoreAtThreshold_MovesToUnderReview ....... BOUNDARY VALUE (500)
+- StartReview_ScoreBelowThreshold_MovesToIneligible ..... BOUNDARY VALUE (499), DISTINCT CASES
+- FullFlow_ValidApplication_EndsApprovedWithExpectedAmount NORMAL OPERATION
+- Decide_PolicyRejection_MovesToDeclined ................ DISTINCT CASES
+- Decide_OnPending_IsNotAllowed_AndKeepsStateUnchanged .. MISSING PREREQUISITE, STATE PRESERVATION
+- Decide_PolicyReturnsNegativeAmount_IsNotAllowed ....... validation before commit
+- RepeatedOperations_ReturnExistingState_WithoutChange .. REPEATED OPERATION
+WorkflowTests.cs (Assignment 5 tests adapted + new)
+- NormalWorkflow_BothPolicies_ApproveFullRequestedAmount
+- EmptyDataset_ProducesEmptySummaryWithoutCrashing
+- BoundaryCreditScore_AtEligibilityThreshold_IsIncludedInReview
+- BoundaryCreditScore_JustBelowEligibilityThreshold_IsExcludedFromReview
+- TwoPolicies_OnSameInput_ProduceDifferentApprovalDecision
+- DebtSurcharge_CapsApprovedAmountDifferentlyPerPolicy
+- Run_DoesNotMutateInput_AndIsRepeatable ................ STATE PRESERVATION
+- BuildSummary_HandlesEveryFinalCase .................... DISTINCT CASES
+- BuildSummary_RejectsNonFinalStates .................... MISSING PREREQUISITE
+- Intake_SplitsValidAndInvalidRecords_AndKeepsInputUnchanged  DISTINCT CASES (Valid/Invalid)
+
+Latest test run: <run "dotnet test" and paste the result and date here>
+
+
+10. TEAM CONTRIBUTIONS (edit to match who really did what)
+
+Yernazar: ValidatedApplication factory, ValidationOutcome, ApplicationIntake, FactoryTests.cs, README sections 2-3.
+Dias: ApplicationState, TransitionOutcome, ApplicationTransitions, ApplicationWorkflow, ApplicationStages,
+      TransitionTests.cs, WorkflowTests.cs, Program.cs demo, README sections 4-6.
+Each member can explain and defend the whole workflow.

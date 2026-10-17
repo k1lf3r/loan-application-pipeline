@@ -7,7 +7,7 @@ public static class ApprovalPolicies
     public const string ConservativeName = "Conservative";
     public const string FlexibleName = "Flexible";
 
-    public static (bool Approved, decimal ApprovedAmount) Conservative(ApplicationRequest app)
+    public static (bool Approved, decimal ApprovedAmount) Conservative(ValidatedApplication app)
     {
         const int minScore = 650;
         const decimal incomeMultiplier = 3m;
@@ -21,7 +21,7 @@ public static class ApprovalPolicies
         return (true, Math.Min(app.RequestedAmount, limit));
     }
 
-    public static (bool Approved, decimal ApprovedAmount) Flexible(ApplicationRequest app)
+    public static (bool Approved, decimal ApprovedAmount) Flexible(ValidatedApplication app)
     {
         const int minScore = 550;
         const decimal incomeMultiplier = 5m;

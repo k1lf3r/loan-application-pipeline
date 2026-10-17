@@ -6,4 +6,5 @@ public sealed record ApplicationDecision(
     decimal RequestedAmount,
     bool Approved,
     decimal ApprovedAmount,
-    string PolicyName);
+    string PolicyName,
+    string Note);

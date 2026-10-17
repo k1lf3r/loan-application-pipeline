@@ -1,4 +1,0 @@
-<Solution>
-  <Project Path="LoanApplicationPipeline.Tests/LoanApplicationPipeline.Tests.csproj" />
-  <Project Path="LoanApplicationPipeline/LoanApplicationPipeline.csproj" />
-</Solution>
