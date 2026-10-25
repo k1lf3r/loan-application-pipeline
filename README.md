@@ -1,160 +1,166 @@
-LOAN APPLICATION PIPELINE - ASSIGNMENT 6: HANDLING TEMPORAL COUPLING
+LOAN APPLICATION PIPELINE — ASSIGNMENTS 6 & 7 SUMMARY
+1. PROJECT OVERVIEW & ARCHITECTURE
+Topic: Loan application processing and scoring pipeline.
+Academic Year: 2026-2027
+Team: Yernazar, Dias
+Platform: .NET 10 (C# 13/14), xUnit, Visual Studio 2026 / VS Code
+Solution: LoanApplicationPipeline.slnx
 
-Team: Yernazar, Dias (confirm names and groups before submitting)
-Course: Introduction to Functional Programming, 2026-2027
-This project continues the Assignment 5 loan application pipeline (same repository, same domain).
+This stage combines the solutions for Assignment 6 (eliminating temporal coupling, validated factory, explicit states) and Assignment 7 (monadic error handling with Result and Option, Map/Bind composition, and boundary exception handling).
 
+Input Fields:
 
-1. PROJECT OVERVIEW
+ApplicantId (string): Unique applicant identifier.
+MonthlyIncome (decimal): Monthly income, must be non-negative.
+RequestedAmount (decimal): Loan amount requested, must be strictly positive.
+CreditScore (int): Standard credit rating, range [300, 850].
+HasExistingDebt (bool): Must parse strictly to true or false.
+Domain Policies:
 
-Workflow: raw application records -> validated factory -> explicit workflow states -> approval policy -> summary.
+Eligibility: Application must have CreditScore >= 500 to be admitted for review.
+Conservative Policy: Requires CreditScore >= 650. Base limit is 3x income (halved if applicant has debt).
+Flexible Policy: Requires CreditScore >= 550. Base limit is 5x income (halved if applicant has debt).
+2. BUILD AND EXECUTION INSTRUCTIONS
+Prerequisites:
 
-Input: RawApplicationRecord (ApplicantId, MonthlyIncome, RequestedAmount, CreditScore, HasExistingDebt as text).
+.NET 10 SDK (verify using command: dotnet --list-sdks)
+Expected working directory: repository root (where LoanApplicationPipeline.slnx is located).
+Terminal Commands:
 
-Domain rules:
-- ApplicantId required
-- MonthlyIncome >= 0
-- RequestedAmount > 0
-- CreditScore in [300, 850]
-- HasExistingDebt parses as true/false
-- Eligibility threshold: CreditScore >= 500 (ApplicationTransitions.EligibilityThreshold)
-- Conservative policy: min score 650, limit = income x 3; Flexible: min score 550, limit = income x 5;
-  existing debt halves the limit; approved amount = min(requested, limit)
+Build:
+dotnet build LoanApplicationPipeline.slnx
 
-Output: ApplicationSummary (policy, submitted, eligible, approved, total approved amount, ordered decisions).
+Run Automated Tests:
+dotnet test LoanApplicationPipeline.slnx
 
+Run Console Demonstration:
+dotnet run --project LoanApplicationPipeline/LoanApplicationPipeline.csproj
 
-2. TASK 1 - HIDDEN DEPENDENCY (UNSAFE "BEFORE" EXAMPLE, documentation only)
+3. ASSIGNMENT 6: HANDLING TEMPORAL COUPLING
+Task 1: Unsafe Before Example
+In a procedural approach, application lifecycle correctness depends on an implicit method execution order:
 
-In Assignment 5 the pipeline relied on two hidden steps that nothing enforced:
-(1) the record must be validated by ApplicationParser.TryParse first;
-(2) SelectEligibleForReview must run before ComputeDecisions.
-ApplicationRequest had a public constructor and ComputeDecisions accepted any ApplicationRequest.
+// UNSAFE CODE (Before):
+var app = new LoanApplication();
+app.MonthlyIncome = -500;
+app.RequestedAmount = 100000;
+// Developer forgets app.Validate() or calls Approve() before Validate():
+app.Approve(); // Erroneously succeeds with invalid data!
+app.Validate();
 
-    // BEFORE (Assignment 5) - not part of the active code
-    var bad = new ApplicationRequest("X", -5000m, 100m, 700, false);   // never validated
-    var d = ApplicationStages.ComputeDecisions(new[] { bad },
-                ApprovalPolicies.Conservative, "Conservative");
-    // Approved = true, ApprovedAmount = -15000   (Math.Min(100, -5000 * 3))
-    // Also: skipping SelectEligibleForReview lets a score-499 request reach the policy.
+Problem Identified:
+The application can enter a terminal approved state without running validation checks. The caller has to remember an unwritten ordering contract.
 
-Prerequisite: validation, then eligibility review. Wrong order or a skipped step produced an approved
-application with a negative amount, or an application that was never eligibility-checked.
+Safe Solution (After):
 
-AFTER (this version): the prerequisites are visible in the types.
-    var outcome = ValidatedApplication.Create(raw);                  // only way to get a validated value
-    var pending = ApplicationTransitions.Submit(app);                 // needs a ValidatedApplication
-    var r1 = ApplicationTransitions.Decide(pending, policy);          // NotAllowed: review not started
-    var r2 = ApplicationTransitions.StartReview(pending);             // Moved(UnderReview | Ineligible)
-Calls that no longer compile (not included in the project):
-    new ValidatedApplication(...)                  // constructor is private
-    app with { CreditScore = 900 }                 // properties are get-only
-    ApplicationWorkflow.Run(rawRecords, ...)       // needs ValidatedApplication, not raw data
+Validated Factory: ValidatedApplication has a private constructor. Unchecked instantiation is prevented at compile time. External callers must call ValidatedApplication.Create(raw), which validates all domain invariants and returns Result<ValidatedApplication, DomainError>.
+Explicit State Hierarchy:
+LoanWorkflowState.PendingReview (holds ValidatedApplication and ApplicantProfile)
+LoanWorkflowState.Approved (terminal state)
+LoanWorkflowState.Rejected (terminal state)
+Safe State Transitions: ApplicationStages.ApplyDecision accepts only state transitions defined in pattern matching. Calling ApplyDecision on already finalized states (Approved or Rejected) safely returns DomainError.InvalidStateTransition without corrupting data or throwing exceptions.
+4. ASSIGNMENT 7: FUNCTIONAL ERROR HANDLING
+Task 1: Explicit Domain Failures
+Domain operations do not throw business exceptions. Failures are represented via the closed DomainError hierarchy:
 
+ValidationError: Rejection by factory rules (e.g. negative income, invalid score bounds).
+ApplicantNotFound: Applicant ID does not exist in registry.
+IneligibleCreditScore: Credit score is below 500 threshold.
+InvalidStateTransition: Attempt to re-evaluate an already finalized state.
+Task 2: Missing Values and Legitimate Zero
+The ApplicantRegistry.FindById method returns Option<ApplicantProfile> (Some or None).
 
-3. TASK 2 - FACTORY
+Distinguishing Zero vs Absence: Applicant A1 has ExistingDebtAmount = 0m. This is valid numeric data returned as Option.Some, distinct from an absent record (Option.None).
+If an applicant is not found, Option.None is converted into DomainError.ApplicantNotFound via .ToResult().
+Task 3: Composition via Map and Bind
+LoanApplicationWorkflow.ProcessApplication composes the end-to-end pipeline:
 
-File: src/LoanApplicationPipeline/Models/ValidatedApplication.cs -> ValidatedApplication.Create
-- Checks all five rules above (more than the required two) and reports every failed rule.
-- Access restriction: private constructor + get-only properties. External code cannot construct an
-  unchecked value or change one afterwards. Amounts are normalised to 2 decimals inside the factory.
-- Returns ValidationOutcome.Valid (usable value) or ValidationOutcome.Invalid (reasons); no partial value escapes.
-- Used by the real application: ApplicationIntake.Process (called from Program.cs) feeds ApplicationWorkflow.Run.
+ValidatedApplication.Create(raw) returns Result<ValidatedApplication, DomainError>.
+.Bind(...) performs lookup in ApplicantRegistry and packages the PendingReview state.
+.Bind(ApplicationStages.VerifyEligibility) checks the 500 score threshold.
+.Bind(...) evaluates the selected approval policy.
+.Map(ApplicationStages.ToReceipt) transforms the terminal domain state into a DecisionReceipt.
+Failure Propagation Guarantee:
+If any step returns Failure, subsequent Map and Bind callbacks are not executed. This is verified in FunctionalCoreTests.FailurePropagation_MapAndBind_DoNotInvokeSuppliedFunctions using invocation counter assertions (counter remains 0).
 
+Task 4: Boundary Exception Handling
+ApplicationDataLoader.LoadFromJsonFile handles external I/O:
 
-4. TASK 3 - DISTINCT CASES
+Missing file: System.IO.FileNotFoundException is intercepted and converted to DomainError.FileNotFound.
+Malformed content: System.Text.Json.JsonException is intercepted and converted to DomainError.MalformedFile.
+Domain state remains untouched and no unhandled runtime exceptions escape to the user.
+5. REQUIREMENT-TO-CODE MAP
+Core Monads (Option, Result):
+Files: Core/Option.cs, Core/Result.cs
+Author: Yernazar
 
-ValidationOutcome (Models/ValidationOutcome.cs): Valid(ValidatedApplication) | Invalid(Reasons).
-ApplicationState (Models/ApplicationState.cs), closed hierarchy (private base constructor):
-- Pending(Application)               submitted, review not started
-- UnderReview(Application)           score >= 500, waiting for a policy decision
-- Approved(Application, Amount)      policy approved, carries the amount
-- Declined(Application, Reason)      policy rejected, carries the reason
-- Ineligible(Application, Threshold) score below threshold, never scored
-TransitionOutcome (Models/TransitionOutcome.cs): Moved(Next) | NotAllowed(Reason).
+Domain Error Model:
+File: Core/DomainError.cs
+Author: Dias
 
+Validated Factory (Assignment 6):
+File: Models/ValidatedApplication.cs
+Author: Yernazar
 
-5. TASK 4 - PATTERN MATCHING IN THE REAL PATH
+Workflow State Discriminated Union:
+File: Models/LoanWorkflowState.cs
+Author: Dias
 
-- ApplicationIntake.Process: switch over ValidationOutcome (Valid -> accepted, Invalid -> reasons).
-- ApplicationTransitions.StartReview / Decide: switch expressions over ApplicationState.
-- ApplicationWorkflow.Process: switch over TransitionOutcome.
-- ApplicationStages.BuildSummary: switch over every state case (Pending/UnderReview are rejected as non-final).
-Fallbacks throw InvalidOperationException; no casts and no null-forgiving operators are used.
+Registry with Option (Assignment 7):
+File: Services/ApplicantRegistry.cs
+Author: Yernazar
 
+Boundary File Loader (JSON I/O):
+File: Services/ApplicationDataLoader.cs
+Author: Dias
 
-6. TASK 5 - SAFE OPERATIONS
+Pure Pipeline Stages & Policies:
+Files: Pipeline/ApprovalPolicies.cs, Pipeline/ApplicationStages.cs
+Author: Dias & Yernazar
 
-- Transitions are pure: they take a state and return a new outcome; nothing is mutated.
-- Decide accepts only an ApplicationState; the prerequisite (UnderReview) is visible and enforced.
-- ApplyPolicy validates the policy result (negative amount, rejected-with-amount) before creating a new state.
-- Failed transitions return NotAllowed; the original state, application and input collections are untouched.
-- Repeated operation rule (documented): StartReview/Decide on a state that already moved on returns the
-  EXISTING state unchanged (idempotent, same object).
-- Demonstrations (see Program.cs output): one successful operation (A1), invalid cases (A6, A7, A8, A9 rejected by
-  the factory; Decide on Pending rejected as an invalid sequence), repeated Decide.
+Workflow Composition (Map/Bind):
+File: Pipeline/LoanApplicationWorkflow.cs
+Author: Dias
 
+Tests:
+Files: FunctionalCoreTests.cs, FactoryAndTemporalTests.cs (Yernazar);
+PipelineWorkflowTests.cs, BoundaryIoTests.cs (Dias).
 
-7. HOW TO RUN
+6. AUTOMATED TEST SUITE (14 TESTS)
+Test Class: FunctionalCoreTests
 
-SDK: .NET 10 (check with "dotnet --list-sdks"; otherwise change <TargetFramework> in both .csproj files).
-Working directory: repository root (where LoanApplicationPipeline.sln is).
+Map_OnSuccess_TransformsValue -> Verifies Map success transformation.
+Bind_OnSuccess_ChainsDependentResult -> Verifies Bind continuation.
+FailurePropagation_MapAndBind_DoNotInvokeSuppliedFunctions -> Verifies skipped dependent calls on failure using invocation counters.
+Option_DistinguishesBetweenZeroAndAbsence -> Asserts legitimate debt 0m is preserved as Some and not confused with None.
+Test Class: FactoryAndTemporalTests
+5. FactorySuccess_ValidInput_CreatesValidatedApplication -> Asserts successful validated construction.
+6. FactoryRejection_InvalidRules_RejectWithSpecificReason -> Asserts factory rejects invalid inputs across all boundary conditions.
+7. RepeatedOperation_OnFinalizedState_IsSafelyRejected -> Asserts calling ApplyDecision on an Approved state returns InvalidStateTransition.
 
-    dotnet build
-    dotnet run --project src/LoanApplicationPipeline
-    dotnet test
+Test Class: PipelineWorkflowTests
+8. CompleteSuccess_IntegratedResultChain_ProducesApprovedReceipt -> Complete end-to-end Result pipeline execution.
+9. DomainFailure1_ScoreBelowThreshold_RejectsBeforeEvaluation -> Domain rejection when score is under 500.
+10. DomainFailure2_ApplicantNotFound_RejectsWorkflow -> Domain rejection when registry lookup fails.
+11. BoundaryCreditScore_AtEligibilityThreshold_PassesEligibility -> Verifies exact score limit of 500 passes.
 
-Normal demonstration: run the console app - intake output, both policies, then the safe transition demo.
-Failure demonstration: SKIP lines for A6-A9 and the "Rejected: Cannot decide..." line of the transition demo.
-Prerequisites: .NET 10 SDK only; no network services, secrets or databases.
+Test Class: BoundaryIoTests
+12. MissingFile_ReturnsFileNotFoundResultWithoutThrowing -> Boundary handles missing JSON file.
+13. MalformedJsonFile_ReturnsMalformedFileResult -> Boundary handles corrupted JSON syntax.
+14. ValidJsonFile_LoadsRecordsSuccessfully -> Boundary successfully reads and deserializes records.
 
+Latest test run outcome: 14 passed, 0 failed.
 
-8. REQUIREMENT-TO-CODE MAP
+7. TEAM RESPONSIBILITIES
+Yernazar:
 
-Hidden dependency example ........ README.md section 2
-Factory (Task 2) ................. Models/ValidatedApplication.cs -> Create
-Distinct cases (Task 3) .......... Models/ValidationOutcome.cs, ApplicationState.cs, TransitionOutcome.cs
-Pattern matching (Task 4) ........ Pipeline/ApplicationIntake.cs, ApplicationTransitions.cs, ApplicationWorkflow.cs, ApplicationStages.cs
-Safe operations (Task 5) ......... Pipeline/ApplicationTransitions.cs (StartReview, Decide)
-Workflow ......................... Pipeline/ApplicationWorkflow.cs -> Run, Process
-Policies (from Assignment 5) ..... Pipeline/ApprovalPolicies.cs (now take ValidatedApplication)
+Implemented monadic primitives: Option<T> and Result<T, E> with Map and Bind.
+Built ValidatedApplication factory with private constructor and invariant guards.
+Implemented ApplicantRegistry supporting Option lookups and legitimate zero debt.
+Authored FunctionalCoreTests.cs and FactoryAndTemporalTests.cs.
+Dias:
 
-
-9. TESTS (23 test methods; the factory theory has 9 data rows)
-
-FactoryTests.cs
-- Create_ValidInput_ReturnsValidWithExpectedData ........ FACTORY SUCCESS
-- Create_InvalidInput_ReturnsInvalidWithReason (9 rows) . FACTORY REJECTION
-- Create_CreditScoreBoundaries_FollowRange .............. BOUNDARY VALUE (300/299, 850/851)
-- Create_MultipleBrokenFields_ReportsAllReasons
-- Create_NormalisesAmountsToTwoDecimals
-- Create_FailedConstruction_LeavesRawRecordUnchanged .... STATE PRESERVATION
-TransitionTests.cs
-- StartReview_ScoreAtThreshold_MovesToUnderReview ....... BOUNDARY VALUE (500)
-- StartReview_ScoreBelowThreshold_MovesToIneligible ..... BOUNDARY VALUE (499), DISTINCT CASES
-- FullFlow_ValidApplication_EndsApprovedWithExpectedAmount NORMAL OPERATION
-- Decide_PolicyRejection_MovesToDeclined ................ DISTINCT CASES
-- Decide_OnPending_IsNotAllowed_AndKeepsStateUnchanged .. MISSING PREREQUISITE, STATE PRESERVATION
-- Decide_PolicyReturnsNegativeAmount_IsNotAllowed ....... validation before commit
-- RepeatedOperations_ReturnExistingState_WithoutChange .. REPEATED OPERATION
-WorkflowTests.cs (Assignment 5 tests adapted + new)
-- NormalWorkflow_BothPolicies_ApproveFullRequestedAmount
-- EmptyDataset_ProducesEmptySummaryWithoutCrashing
-- BoundaryCreditScore_AtEligibilityThreshold_IsIncludedInReview
-- BoundaryCreditScore_JustBelowEligibilityThreshold_IsExcludedFromReview
-- TwoPolicies_OnSameInput_ProduceDifferentApprovalDecision
-- DebtSurcharge_CapsApprovedAmountDifferentlyPerPolicy
-- Run_DoesNotMutateInput_AndIsRepeatable ................ STATE PRESERVATION
-- BuildSummary_HandlesEveryFinalCase .................... DISTINCT CASES
-- BuildSummary_RejectsNonFinalStates .................... MISSING PREREQUISITE
-- Intake_SplitsValidAndInvalidRecords_AndKeepsInputUnchanged  DISTINCT CASES (Valid/Invalid)
-
-Latest test run: <run "dotnet test" and paste the result and date here>
-
-
-10. TEAM CONTRIBUTIONS (edit to match who really did what)
-
-Yernazar: ValidatedApplication factory, ValidationOutcome, ApplicationIntake, FactoryTests.cs, README sections 2-3.
-Dias: ApplicationState, TransitionOutcome, ApplicationTransitions, ApplicationWorkflow, ApplicationStages,
-      TransitionTests.cs, WorkflowTests.cs, Program.cs demo, README sections 4-6.
-Each member can explain and defend the whole workflow.
+Designed Discriminated Unions: DomainError and LoanWorkflowState.
+Implemented ApplicationDataLoader with boundary exception handling for JSON.
+Built LoanApplicationWorkflow composing Map/Bind steps into a single pipeline.
+Authored PipelineWorkflowTests.cs, BoundaryIoTests.cs, and Program.cs demo.
