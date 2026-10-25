@@ -1,0 +1,19 @@
+## Build & Output
+bin/
+obj/
+out/
+
+## Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+## Rider & JetBrains
+.idea/
+*.DotSettings.user
+
+## OS Files
+.DS_Store
+Thumbs.db
