@@ -1,0 +1,11 @@
+id,name,purpose,amount,termMonths,annualRateBp,monthlyIncome,creditScore,existingDebt
+A001,Aigerim Bekova,Education,500000,12,1400,350000,720,0
+A002,Nurlan Sadykov,Consumer,1500000,24,1600,420000,680,40000
+A003,Dana Omarova,Housing,3000000,36,1200,600000,760,0
+A004,Timur Kasenov,Business,8000000,60,1500,900000,640,120000
+A005,Madina Akhmetova,Housing,12000000,120,1300,1100000,790,80000
+A006,Ruslan Ibragimov,Consumer,800000,18,1800,300000,610,60000
+A007,Saltanat Nurpeis,Education,2500000,48,1100,700000,740,0
+A008,Yerlan Dauletov,Business,6000000,84,1400,800000,700,150000
+A009,Aliya Tleuova,Consumer,300000,6,2000,250000,655,30000
+A010,Bauyrzhan Serik,Housing,20000000,180,1250,1500000,720,200000

@@ -1,0 +1,10 @@
+# .NET build output (native/bin is kept on purpose: it holds the runtime binary)
+src/**/bin/
+src/**/obj/
+tests/**/bin/
+tests/**/obj/
+output/
+.vs/
+.idea/
+*.user
+*.tmp

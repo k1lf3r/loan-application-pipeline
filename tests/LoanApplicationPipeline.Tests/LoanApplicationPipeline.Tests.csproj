@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Use the same package versions as your existing test project from Assignments 5-7. -->
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\LoanApplicationPipeline\LoanApplicationPipeline.csproj" />
+  </ItemGroup>
+
+  <!-- The native binary must sit next to the test assembly for the real native-call test. -->
+  <ItemGroup>
+    <None Include="..\..\native\bin\loanrisk.dll" Link="loanrisk.dll"
+          Condition="Exists('..\..\native\bin\loanrisk.dll')" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\native\bin\libloanrisk.so" Link="libloanrisk.so"
+          Condition="Exists('..\..\native\bin\libloanrisk.so')" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\native\bin\libloanrisk.dylib" Link="libloanrisk.dylib"
+          Condition="Exists('..\..\native\bin\libloanrisk.dylib')" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>
