@@ -1,10 +1,19 @@
-# .NET build output (native/bin is kept on purpose: it holds the runtime binary)
-src/**/bin/
-src/**/obj/
-tests/**/bin/
-tests/**/obj/
-output/
+## Build & Output
+bin/
+obj/
+out/
+
+## Visual Studio
 .vs/
-.idea/
 *.user
-*.tmp
+*.suo
+*.userosscache
+*.sln.docstates
+
+## Rider & JetBrains
+.idea/
+*.DotSettings.user
+
+## OS Files
+.DS_Store
+Thumbs.db

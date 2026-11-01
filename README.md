@@ -1,204 +1,166 @@
-# LoanApplicationPipeline - Assignment 8: Extension Methods and LINQ
+LOAN APPLICATION PIPELINE — ASSIGNMENTS 6 & 7 SUMMARY
+1. PROJECT OVERVIEW & ARCHITECTURE
+Topic: Loan application processing and scoring pipeline.
+Academic Year: 2026-2027
+Team: Yernazar, Dias
+Platform: .NET 10 (C# 13/14), xUnit, Visual Studio 2026 / VS Code
+Solution: LoanApplicationPipeline.slnx
 
-Introduction to Functional Programming, 2026-2027. One runnable project across Assignments 5-8.
-Assignment 8 adds: custom extension methods, two LINQ reports, curried scoring, deferred execution,
-safe disposal, a retention note, and a native C library called through P/Invoke.
+This stage combines the solutions for Assignment 6 (eliminating temporal coupling, validated factory, explicit states) and Assignment 7 (monadic error handling with Result and Option, Map/Bind composition, and boundary exception handling).
 
-## Team
+Input Fields:
 
-| Member | Group | Implemented logic | Tests | Documentation |
-|---|---|---|---|---|
-| **Yernazar Zhauken** | ______ | Tasks 1, 2, 3 + integration: `ResultExtensions.Bind`, `ApplicationQueryExtensions` (`Scored`, `TotalRequested`), `ApplicationReports` (both LINQ reports), `ScoringFunctions` (currying), `LoanReportWorkflow`, `ReportExporter`, `Program.cs` | `ReportAndExtensionTests.cs` (11 methods), `WorkflowAndFileTests.cs` (8 methods) | Sections "Reports", "Extensions", "Configured functions", "Integration", "Expected results" |
-| **Dias Yergazi** | ______ | Tasks 4-9: `ApplicationFile` (yield + `using`), CSV parsing (`ApplicationCsv`), native library `native/loanrisk.c/.h`, build scripts, `NativeMethods`, `NativePaymentCalculator` adapter | `LazyAndResourceTests.cs` (7 methods), `NativeIntegrationTests.cs` (4 methods) | Sections "Deferred execution", "Resource ownership", "Resource note", "Native library" |
+ApplicantId (string): Unique applicant identifier.
+MonthlyIncome (decimal): Monthly income, must be non-negative.
+RequestedAmount (decimal): Loan amount requested, must be strictly positive.
+CreditScore (int): Standard credit rating, range [300, 850].
+HasExistingDebt (bool): Must parse strictly to true or false.
+Domain Policies:
 
-(Fill in the Group column before submission. Each member defends their own rows.)
+Eligibility: Application must have CreditScore >= 500 to be admitted for review.
+Conservative Policy: Requires CreditScore >= 650. Base limit is 3x income (halved if applicant has debt).
+Flexible Policy: Requires CreditScore >= 550. Base limit is 5x income (halved if applicant has debt).
+2. BUILD AND EXECUTION INSTRUCTIONS
+Prerequisites:
 
-## Requirements
+.NET 10 SDK (verify using command: dotnet --list-sdks)
+Expected working directory: repository root (where LoanApplicationPipeline.slnx is located).
+Terminal Commands:
 
-- .NET SDK 10.x (`dotnet --version`), a C compiler: `gcc` (MinGW-w64 on Windows) or MSVC `cl`.
-- Run all commands from the repository root (the folder that contains this README).
+Build:
+dotnet build LoanApplicationPipeline.slnx
 
-```text
-# 1. build the native library (once, and again after changing native/*.c)
-Linux/macOS :  sh native/build.sh
-Windows     :  native\build.bat          (MinGW-w64 gcc on PATH)
-                or, MSVC x64 prompt:  cl /nologo /O2 /LD /Fe:native\bin\loanrisk.dll native\loanrisk.c
+Run Automated Tests:
+dotnet test LoanApplicationPipeline.slnx
 
-# 2. tests
-dotnet test tests/LoanApplicationPipeline.Tests
+Run Console Demonstration:
+dotnet run --project LoanApplicationPipeline/LoanApplicationPipeline.csproj
 
-# 3. normal demonstration (deferred demo, both reports, both policies, CSV export to ./output)
-dotnet run --project src/LoanApplicationPipeline
+3. ASSIGNMENT 6: HANDLING TEMPORAL COUPLING
+Task 1: Unsafe Before Example
+In a procedural approach, application lifecycle correctness depends on an implicit method execution order:
 
-# 4. failure demonstrations
-dotnet run --project src/LoanApplicationPipeline -- fail-native   # native load failure -> Result failure, exit code 1, nothing exported
-dotnet run --project src/LoanApplicationPipeline -- fail-file     # missing input file -> Result failure, exit code 1
-```
+// UNSAFE CODE (Before):
+var app = new LoanApplication();
+app.MonthlyIncome = -500;
+app.RequestedAmount = 100000;
+// Developer forgets app.Validate() or calls Approve() before Validate():
+app.Approve(); // Erroneously succeeds with invalid data!
+app.Validate();
 
-## Input and domain rules
+Problem Identified:
+The application can enter a terminal approved state without running validation checks. The caller has to remember an unwritten ordering contract.
 
-Input: `src/LoanApplicationPipeline/Data/applications.csv` (10 loan applications, copied next to the executable).
-Columns: `id,name,purpose,amount,termMonths,annualRateBp,monthlyIncome,creditScore,existingDebt`.
-Money is in whole tenge; rates are basis points (1200 = 12.00 %).
+Safe Solution (After):
 
-`LoanApplication.Create` validates: id and name not empty; purpose is one of Education, Housing, Business, Consumer;
-amount 1..10^12; term 1..600; rate 0..10000 bp; income > 0; credit score 300..850; existing debt >= 0.
-Every violation is an explicit `Result` failure with a code such as `domain.invalid_credit_score`.
+Validated Factory: ValidatedApplication has a private constructor. Unchecked instantiation is prevented at compile time. External callers must call ValidatedApplication.Create(raw), which validates all domain invariants and returns Result<ValidatedApplication, DomainError>.
+Explicit State Hierarchy:
+LoanWorkflowState.PendingReview (holds ValidatedApplication and ApplicantProfile)
+LoanWorkflowState.Approved (terminal state)
+LoanWorkflowState.Rejected (terminal state)
+Safe State Transitions: ApplicationStages.ApplyDecision accepts only state transitions defined in pattern matching. Calling ApplyDecision on already finalized states (Approved or Rejected) safely returns DomainError.InvalidStateTransition without corrupting data or throwing exceptions.
+4. ASSIGNMENT 7: FUNCTIONAL ERROR HANDLING
+Task 1: Explicit Domain Failures
+Domain operations do not throw business exceptions. Failures are represented via the closed DomainError hierarchy:
 
-Pricing: the native function returns the monthly annuity payment.
-`PaymentToIncomeBp = (payment + existingDebt) * 10000 / income`, `BurdenPercent = PaymentToIncomeBp / 100`.
+ValidationError: Rejection by factory rules (e.g. negative income, invalid score bounds).
+ApplicantNotFound: Applicant ID does not exist in registry.
+IneligibleCreditScore: Credit score is below 500 threshold.
+InvalidStateTransition: Attempt to re-evaluate an already finalized state.
+Task 2: Missing Values and Legitimate Zero
+The ApplicantRegistry.FindById method returns Option<ApplicantProfile> (Some or None).
 
-## Task 1 - Custom extension methods (Yernazar)
+Distinguishing Zero vs Absence: Applicant A1 has ExistingDebtAmount = 0m. This is valid numeric data returned as Option.Some, distinct from an absent record (Option.None).
+If an applicant is not found, Option.None is converted into DomainError.ApplicantNotFound via .ToResult().
+Task 3: Composition via Map and Bind
+LoanApplicationWorkflow.ProcessApplication composes the end-to-end pipeline:
 
-| Extension | Receiver -> return | Why it belongs on the receiver | Used in |
-|---|---|---|---|
-| `Bind` (`Common/ResultExtensions.cs`) | `Result<TIn>` -> `Result<TOut>` | Chaining is an operation *of* a Result: success continues, failure is passed on and the next step is skipped. | `LoanReportWorkflow.Prepare`, `.Run` |
-| `Scored` (`Queries/ApplicationQueryExtensions.cs`) | `IEnumerable<PricedApplication>` -> `IEnumerable<ScoredApplication>` (lazy) | Scoring is a projection of a sequence of priced applications; both reports need it, so it is written once. The score function is a parameter, so no global setting. | both reports |
-| `TotalRequested` (same file) | `IEnumerable<PricedApplication>` -> `long` (uses `Aggregate`) | A total over applications is a reusable aggregate; empty input gives 0. Read-only. | Report 2, `BuildReport` |
+ValidatedApplication.Create(raw) returns Result<ValidatedApplication, DomainError>.
+.Bind(...) performs lookup in ApplicantRegistry and packages the PendingReview state.
+.Bind(ApplicationStages.VerifyEligibility) checks the 500 score threshold.
+.Bind(...) evaluates the selected approval policy.
+.Map(ApplicationStages.ToReceipt) transforms the terminal domain state into a DecisionReceipt.
+Failure Propagation Guarantee:
+If any step returns Failure, subsequent Map and Bind callbacks are not executed. This is verified in FunctionalCoreTests.FailurePropagation_MapAndBind_DoNotInvokeSuppliedFunctions using invocation counter assertions (counter remains 0).
 
-## Task 2 - Two LINQ reports (Yernazar)
+Task 4: Boundary Exception Handling
+ApplicationDataLoader.LoadFromJsonFile handles external I/O:
 
-Both live in `Queries/ApplicationReports.cs`, are pure (no Console, no file, no native call) and take the data
-loaded from `applications.csv`.
+Missing file: System.IO.FileNotFoundException is intercepted and converted to DomainError.FileNotFound.
+Malformed content: System.Text.Json.JsonException is intercepted and converted to DomainError.MalformedFile.
+Domain state remains untouched and no unhandled runtime exceptions escape to the user.
+5. REQUIREMENT-TO-CODE MAP
+Core Monads (Option, Result):
+Files: Core/Option.cs, Core/Result.cs
+Author: Yernazar
 
-**Report 1 - Manual review queue.** User: credit underwriter. Input: priced applications, a configured score
-function, a threshold (500). Filter: `score < threshold`. Pipeline: `Scored -> Where -> OrderBy(score) ->
-ThenBy(Id, ordinal) -> Select -> ToList`. Output fields: `Id, Name, BurdenPercent, Score`.
-Expected (sample data): Conservative -> `A006, A004, A009, A008, A002, A010`; Flexible -> `A006`.
+Domain Error Model:
+File: Core/DomainError.cs
+Author: Dias
 
-**Report 2 - Approved portfolio by purpose.** User: portfolio manager. Same inputs. Filter: `score >= threshold`.
-Pipeline: `Scored -> Where -> GroupBy(purpose) -> Select(Count, TotalRequested/Aggregate, Sum(payment)) ->
-OrderByDescending(total) -> ThenBy(purpose) -> ToList`. Output: `Purpose, Count, TotalAmount, TotalMonthlyPayment`.
-Expected: Conservative -> Housing 2 / 15 000 000 / 278 816 and Education 2 / 3 000 000 / 109 508.
-Flexible -> Housing 3 / 35 000 000 / 525 320, Business 2 / 14 000 000 / 302 759, Education 2 / 3 000 000 / 109 508,
-Consumer 2 / 1 800 000 / 126 402.
+Validated Factory (Assignment 6):
+File: Models/ValidatedApplication.cs
+Author: Yernazar
 
-Ties are deterministic: Report 1 breaks equal scores by `Id` (ordinal); Report 2 breaks equal totals by the `LoanPurpose` order.
+Workflow State Discriminated Union:
+File: Models/LoanWorkflowState.cs
+Author: Dias
 
-## Task 3 - Curried function and partial application (Yernazar)
+Registry with Option (Assignment 7):
+File: Services/ApplicantRegistry.cs
+Author: Yernazar
 
-`ScoringFunctions.CreateScore : creditWeight -> burdenWeight -> (PricedApplication -> int)`,
-`Score = CreditScore * creditWeight - BurdenPercent * burdenWeight`.
-Partial application: `Conservative = CreateScore(1)(10)`, `Flexible = CreateScore(1)(4)`.
-Same input (credit 700, burden 30 %): Conservative 400, Flexible 580, so with threshold 500 one is sent to review
-and the other is not. The configured function is passed into `BuildReport`/`ReviewQueue`; there is no mutable global.
+Boundary File Loader (JSON I/O):
+File: Services/ApplicationDataLoader.cs
+Author: Dias
 
-## Task 4 - Deferred execution (Dias)
+Pure Pipeline Stages & Policies:
+Files: Pipeline/ApprovalPolicies.cs, Pipeline/ApplicationStages.cs
+Author: Dias & Yernazar
 
-`ApplicationFile.Stream(Func<TextReader>)` uses `yield return` and produces one parsed `Result<LoanApplication>`
-per CSV line. Creating the enumerable runs none of the body (the reader is not even opened); the first `MoveNext`
-opens the reader. Tests count opens through the `open` delegate (a probe outside the production code).
-`ApplicationFile.Load` is the deliberate materialisation point (`ToArray`): before it, each enumeration would
-re-open and re-read the file (test: 3 opens after 1 `ToArray` + 2 more passes); after it, the snapshot can be
-enumerated any number of times with no file access and no repeated native calls.
+Workflow Composition (Map/Bind):
+File: Pipeline/LoanApplicationWorkflow.cs
+Author: Dias
 
-## Task 5 - Resource ownership and disposal (Dias)
+Tests:
+Files: FunctionalCoreTests.cs, FactoryAndTemporalTests.cs (Yernazar);
+PipelineWorkflowTests.cs, BoundaryIoTests.cs (Dias).
 
-| Resource | Owner | Release point | Failure/early-stop path |
-|---|---|---|---|
-| `TextReader` from `open()` in `ApplicationFile.Stream` | the iterator | `using var reader` | disposed when iteration ends, the consumer stops early (`Take`, `break`) or throws (`foreach` disposes the enumerator) |
-| `StreamReader` created in `StreamFile` / `Load(path)` | `Stream` (it receives and owns it) | same `using` | read error -> `IOException` caught in `Load` -> `Fail("file.unreadable")` after disposal |
-| `StreamWriter` in `ReportExporter.Export` | `Export` | `using` block that ends **before** `File.Move` | temp file deleted, existing report left untouched, `Fail("file.export_failed")` |
+6. AUTOMATED TEST SUITE (14 TESTS)
+Test Class: FunctionalCoreTests
 
-No convenience API (`File.ReadAllText` etc.) is used for owned resources; the tests only use it for setup.
-Garbage collection is not relied on to release file handles.
+Map_OnSuccess_TransformsValue -> Verifies Map success transformation.
+Bind_OnSuccess_ChainsDependentResult -> Verifies Bind continuation.
+FailurePropagation_MapAndBind_DoNotInvokeSuppliedFunctions -> Verifies skipped dependent calls on failure using invocation counters.
+Option_DistinguishesBetweenZeroAndAbsence -> Asserts legitimate debt 0m is preserved as Some and not confused with None.
+Test Class: FactoryAndTemporalTests
+5. FactorySuccess_ValidInput_CreatesValidatedApplication -> Asserts successful validated construction.
+6. FactoryRejection_InvalidRules_RejectWithSpecificReason -> Asserts factory rejects invalid inputs across all boundary conditions.
+7. RepeatedOperation_OnFinalizedState_IsSafelyRejected -> Asserts calling ApplyDecision on an Approved state returns InvalidStateTransition.
 
-## Task 6 - Resource note (retention and allocation) (Dias)
+Test Class: PipelineWorkflowTests
+8. CompleteSuccess_IntegratedResultChain_ProducesApprovedReceipt -> Complete end-to-end Result pipeline execution.
+9. DomainFailure1_ScoreBelowThreshold_RejectsBeforeEvaluation -> Domain rejection when score is under 500.
+10. DomainFailure2_ApplicantNotFound_RejectsWorkflow -> Domain rejection when registry lookup fails.
+11. BoundaryCreditScore_AtEligibilityThreshold_PassesEligibility -> Verifies exact score limit of 500 passes.
 
-- **Materialisation:** `ApplicationFile.Load` (arrays of results, then `LoadedApplications`) and `LoanReportWorkflow.Price`
-  (`PreparedPortfolio.Priced`). Reports end with `ToList()`, so the returned rows hold no reference to the source query.
-- **Deferred queries / closures:** `Scored` captures its source and the score delegate only while it is being enumerated;
-  nothing stores it. `Conservative`/`Flexible` are closures over two integers, they hold no application data.
-- **Long-lived collections, caches, event subscriptions:** none are used. There are no static collections, no caches and no events.
-- **Design decision:** the file is read and the native payment computed **once** into a snapshot, and both policies
-  build their reports from that same snapshot. This avoids re-reading the file and repeating native calls per report.
-- **Trade-off:** streaming keeps only one record in memory but keeps the file open for the whole processing and can be
-  enumerated once; a snapshot costs memory proportional to the number of records but closes the file immediately,
-  allows reuse and gives repeatable results. For 10 records (or thousands) the snapshot is the right choice;
-  for a file too large for memory, the reports would need a single streaming pass. No leak was found or fixed.
+Test Class: BoundaryIoTests
+12. MissingFile_ReturnsFileNotFoundResultWithoutThrowing -> Boundary handles missing JSON file.
+13. MalformedJsonFile_ReturnsMalformedFileResult -> Boundary handles corrupted JSON syntax.
+14. ValidJsonFile_LoadsRecordsSuccessfully -> Boundary successfully reads and deserializes records.
 
-## Tasks 7-9 - Native C library (Dias)
+Latest test run outcome: 14 passed, 0 failed.
 
-Files: `native/loanrisk.c`, `native/loanrisk.h`, `native/build.sh`, `native/build.bat`, binary in `native/bin/`.
-C# side: `Native/NativeMethods.cs` (`DllImport`), `Native/NativePaymentCalculator.cs` (adapter).
+7. TEAM RESPONSIBILITIES
+Yernazar:
 
-**Function contract**
+Implemented monadic primitives: Option<T> and Result<T, E> with Map and Bind.
+Built ValidatedApplication factory with private constructor and invariant guards.
+Implemented ApplicantRegistry supporting Option lookups and legitimate zero debt.
+Authored FunctionalCoreTests.cs and FactoryAndTemporalTests.cs.
+Dias:
 
-```c
-int64_t lp_monthly_payment(int64_t principal_tenge, int32_t annual_rate_bp, int32_t term_months);
-```
-
-| Item | Value |
-|---|---|
-| C# binding | `[DllImport("loanrisk", EntryPoint="lp_monthly_payment", CallingConvention=Cdecl)] static extern long MonthlyPayment(long, int, int)` |
-| Input types | `int64_t` = C# `long`; `int32_t` = C# `int` (fixed-width types, no platform-dependent `long`) |
-| Valid range | principal 1..1 000 000 000 000 tenge; rate 0..10000 bp; term 1..600 months |
-| Output | monthly payment in whole tenge, rounded half away from zero (`llround`); amounts are whole tenge, no floating currency |
-| Invalid input | returns a negative code: `-1` principal, `-2` rate, `-3` term (the adapter checks the same ranges first, so these are a second line of defence) |
-| Formula | `r = bp / 10000 / 12`; `payment = P*r / (1 - (1+r)^-n)`; if `bp = 0`: `P / n` |
-| Manual example | P = 1 000 000, 1200 bp, 12 months: r = 0.01; 10 000 / (1 - 1.01^-12) = 10 000 / 0.112551 = 88 848.79, so **88 849** |
-| Memory | simple values only; no native allocation, nothing to free |
-
-**Adapter (`NativePaymentCalculator`).** Validates domain input -> calls C -> negative code becomes
-`native.rejected_input`; `DllNotFoundException` -> `native.load_failed`; `EntryPointNotFoundException` ->
-`native.entry_point_missing`; `BadImageFormatException` -> `native.wrong_architecture`. The workflow treats the last three as
-fatal (the whole workflow returns a `Fail`, no report is exported); `native.rejected_input` rejects only that record.
-A second constructor takes the native call as a `Func`, which lets tests inject a failing call.
-
-**Build and loading**
-
-| Platform | Compiler | Command | Output |
-|---|---|---|---|
-| Linux x86_64 (verified while preparing this project) | gcc 13.3.0, Ubuntu 24.04 | `sh native/build.sh` = `gcc -std=c99 -O2 -Wall -Wextra -shared -fPIC -o native/bin/libloanrisk.so native/loanrisk.c -lm` | `native/bin/libloanrisk.so` |
-| Windows x64 | MinGW-w64 gcc: ______ (`gcc --version`) | `native\build.bat` = `gcc -std=c99 -O2 -Wall -Wextra -shared -static-libgcc -o native\bin\loanrisk.dll native\loanrisk.c` | `native\bin\loanrisk.dll` |
-
-Both `.csproj` files copy whichever binary exists in `native/bin/` next to the executable / test assembly
-(`<None ... CopyToOutputDirectory="PreserveNewest">`), and .NET resolves `"loanrisk"` to `loanrisk.dll`,
-`libloanrisk.so` or `libloanrisk.dylib` in the application folder. Target architecture must match the .NET runtime
-(x64 library for an x64 `dotnet`). After a clean build, `dotnet build` copies the binary again.
-
-**Integration difficulties and how they were handled** (replace with your own experience if it differs):
-1. On Windows a DLL exports nothing unless the function is marked `__declspec(dllexport)`; `loanrisk.h` defines
-   `LOANRISK_API` for this, and `build.bat` + an `EntryPointNotFoundException` mapping make a missing export visible.
-2. C `long` is 32-bit on Windows and 64-bit on Linux, so the signature uses `int64_t`/`int32_t`, matching C# `long`/`int`.
-3. Deleting a loaded library does not test a fresh load failure, so the failure path is tested through the injectable
-   adapter, and the real call is tested separately against the manually calculated value 88 849.
-
-## Integration (Yernazar)
-
-`LoanReportWorkflow.Prepare` = `ApplicationFile.Load(open).Bind(loaded => Price(loaded, calculator))` (file + native,
-outside pure queries). `BuildReport` is pure. `Program` runs both reports for both policies on one snapshot and exports
-`output/report_conservative.csv` and `output/report_flexible.csv` through `ReportExporter` (temp file + move).
-Failure path: a native load failure or a missing file returns a `Fail`, prints the code, exit code 1, and exports nothing;
-a failed export keeps the previous file. Earlier assignments' parts (pure pipeline stages, safe states, `Result`
-failures) are kept: bad records become explicit `Error` values, never exceptions.
-
-## Requirement map
-
-| Requirement | Files / methods |
-|---|---|
-| 2 extensions used | `ResultExtensions.Bind`, `ApplicationQueryExtensions.Scored/TotalRequested` |
-| 2 LINQ reports | `ApplicationReports.ReviewQueue`, `ApplicationReports.ApprovedByPurpose` |
-| Currying + 2 partial applications | `ScoringFunctions.CreateScore/Conservative/Flexible` |
-| Deferred execution | `ApplicationFile.Stream`, `ApplicationFile.Load` |
-| Disposal | `ApplicationFile.Stream` (`using`), `ReportExporter.Export` (`using`) |
-| Retention note | section "Task 6" above |
-| Native C library | `native/loanrisk.c/.h`, `NativeMethods`, `NativePaymentCalculator` |
-| Complete workflow | `LoanReportWorkflow`, `Program.cs` |
-
-## Tests (30 test methods, 37 cases with the theory; minimum 12)
-
-| Area | Test methods (file) | Expected result |
-|---|---|---|
-| Reports | `ReviewQueue_*`, `ApprovedByPurpose_*` (ReportAndExtensionTests) | normal rows, empty input, no matches, ties by Id / purpose, grouping and totals |
-| Extensions | `Scored_IsLazy_*`, `TotalRequested_*`, `Bind_*` | lazy projection, sum / 0 for empty, failure skips the next step |
-| Configured functions | `PartiallyApplied_Scorers_*`, `ConfiguredFunction_ChangesReportOutcome_*` | 400 vs 580 on the same input; review vs no review |
-| Domain validation | `Create_RejectsInvalidValues_*` (8 cases), `Create_RejectsUnknownPurpose_*` | specific `domain.invalid_*` codes |
-| Deferred execution | `Stream_DoesNothingUntilEnumerated_*`, `Materialisation_*` (LazyAndResourceTests) | 0 opens before iteration; 1 after `ToArray`; reuse = no new opens |
-| Resource lifetime | `Stream_DisposesReader_*` (success, early stop, consumer throws), `Load_WhenReadingFailsMidway_*`, `Load_FromFilePath_*` | reader disposed; file handle released |
-| Native integration | `RealNativeCall_*`, `Adapter_*` (NativeIntegrationTests) | 88 849 and 100 000 from real C; load/binding failures become `Fail` |
-| Complete workflows | `Workflow_NormalPath_*`, `Workflow_BadRecords_*`, `Workflow_NativeRejectsEverything_*`, `Workflow_NativeLoadFailure_*` | reports as listed above; failure keeps state consistent |
-| File boundaries | `Load_MissingFile_*`, `Load_MalformedContent_*`, `Export_*` (temp dirs, cleaned up) | safe failures, rejected rows, no `.tmp` left, old file kept |
-
-**Latest test outcome:** ______ (run `dotnet test tests/LoanApplicationPipeline.Tests` from a clean extraction and paste
-the result here, e.g. "Passed: 37, Failed: 0, date").
+Designed Discriminated Unions: DomainError and LoanWorkflowState.
+Implemented ApplicationDataLoader with boundary exception handling for JSON.
+Built LoanApplicationWorkflow composing Map/Bind steps into a single pipeline.
+Authored PipelineWorkflowTests.cs, BoundaryIoTests.cs, and Program.cs demo.
