@@ -1,19 +1,25 @@
-## Build & Output
-bin/
-obj/
-out/
+## .NET build output (native/bin is NOT ignored: it holds the runtime binaries)
+LoanApplicationPipeline/bin/
+LoanApplicationPipeline/obj/
+LoanApplicationPipeline.Tests/bin/
+LoanApplicationPipeline.Tests/obj/
+TestResults/
+output/
 
-## Visual Studio
+## Native build leftovers (the binaries themselves stay tracked)
+native/bin/*.obj
+native/bin/*.exp
+native/bin/*.lib
+native/bin/selftest*
+!native/bin/loanrisk.dll
+
+## Visual Studio / Rider / VS Code
 .vs/
+.idea/
+.vscode/
 *.user
 *.suo
-*.userosscache
-*.sln.docstates
 
-## Rider & JetBrains
-.idea/
-*.DotSettings.user
-
-## OS Files
+## OS files
 .DS_Store
 Thumbs.db

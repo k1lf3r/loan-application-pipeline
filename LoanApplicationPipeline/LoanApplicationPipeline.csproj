@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>LoanApplicationPipeline</RootNamespace>
+  </PropertyGroup>
+
+  <!-- Sample data (JSON + CSV) is copied next to the executable: bin/.../Data/*.csv, *.json -->
+  <ItemGroup>
+    <Content Include="Data\**\*.csv;Data\**\*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- Native library built by native/build.ps1 (Windows) or native/build.sh (Linux/macOS).
+       Whichever binary exists is copied next to the executable, so DllImport("loanrisk") finds it. -->
+  <ItemGroup>
+    <None Include="..\native\bin\loanrisk.dll" Link="loanrisk.dll"
+          Condition="Exists('..\native\bin\loanrisk.dll')" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\native\bin\libloanrisk.so" Link="libloanrisk.so"
+          Condition="Exists('..\native\bin\libloanrisk.so')" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\native\bin\libloanrisk.dylib" Link="libloanrisk.dylib"
+          Condition="Exists('..\native\bin\libloanrisk.dylib')" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

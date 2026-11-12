@@ -1,0 +1,13 @@
+[
+  { "applicantId": "P001", "fullName": "Aigerim Bekova",    "existingDebtMonthly": 0,      "isActive": true },
+  { "applicantId": "P002", "fullName": "Nurlan Sadykov",    "existingDebtMonthly": 40000,  "isActive": true },
+  { "applicantId": "P003", "fullName": "Dana Omarova",      "existingDebtMonthly": 0,      "isActive": true },
+  { "applicantId": "P004", "fullName": "Timur Kasenov",     "existingDebtMonthly": 120000, "isActive": true },
+  { "applicantId": "P005", "fullName": "Madina Akhmetova",  "existingDebtMonthly": 80000,  "isActive": true },
+  { "applicantId": "P006", "fullName": "Ruslan Ibragimov",  "existingDebtMonthly": 60000,  "isActive": true },
+  { "applicantId": "P007", "fullName": "Saltanat Nurpeis",  "existingDebtMonthly": 0,      "isActive": true },
+  { "applicantId": "P008", "fullName": "Yerlan Dauletov",   "existingDebtMonthly": 150000, "isActive": true },
+  { "applicantId": "P009", "fullName": "Aliya Tleuova",     "existingDebtMonthly": 30000,  "isActive": true },
+  { "applicantId": "P010", "fullName": "Bauyrzhan Serik",   "existingDebtMonthly": 200000, "isActive": true },
+  { "applicantId": "P011", "fullName": "Inactive Client",   "existingDebtMonthly": 0,      "isActive": false }
+]
